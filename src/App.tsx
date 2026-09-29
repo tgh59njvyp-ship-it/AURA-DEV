@@ -12,7 +12,7 @@ import { NotificationToast } from './components/common/NotificationToast';
 
 import { DashboardView } from './components/dashboard/DashboardView';
 import { ChatView } from './components/chat/ChatView';
-import { BuildView } from './components/build/BuildView';
+import { BuildView } from './components/builder/BuildView';
 import { ProjectsView } from './components/projects/ProjectsView';
 import { FilesView } from './components/files/FilesView';
 import { AgentsView } from './components/agents/AgentsView';
