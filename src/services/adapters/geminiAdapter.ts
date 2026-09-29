@@ -15,8 +15,14 @@ export class GeminiProviderAdapter implements AIProviderAdapter {
       id: 'gemini-2.5-flash',
       name: 'Gemini 2.5 Flash',
       provider: 'gemini',
+      status: 'Active',
       category: 'recommended',
       contextLength: 1048576,
+      inputTokenLimit: 1048576,
+      outputTokenLimit: 8192,
+      supportsText: true,
+      supportsImage: true,
+      supportsCode: true,
       promptPricePerM: 0.15,
       completionPricePerM: 0.60,
       description: 'Ultra-fast, cost-effective multimodal model for high-frequency coding and chat.'
@@ -25,8 +31,14 @@ export class GeminiProviderAdapter implements AIProviderAdapter {
       id: 'gemini-2.5-pro',
       name: 'Gemini 2.5 Pro',
       provider: 'gemini',
+      status: 'Active',
       category: 'reasoning',
       contextLength: 1048576,
+      inputTokenLimit: 1048576,
+      outputTokenLimit: 8192,
+      supportsText: true,
+      supportsImage: true,
+      supportsCode: true,
       promptPricePerM: 1.25,
       completionPricePerM: 5.00,
       description: 'State-of-the-art reasoning, deep code architecture, and multi-file project synthesis.'
@@ -35,8 +47,14 @@ export class GeminiProviderAdapter implements AIProviderAdapter {
       id: 'gemini-1.5-flash',
       name: 'Gemini 1.5 Flash',
       provider: 'gemini',
+      status: 'Active',
       category: 'fast',
       contextLength: 1048576,
+      inputTokenLimit: 1048576,
+      outputTokenLimit: 8192,
+      supportsText: true,
+      supportsImage: true,
+      supportsCode: true,
       promptPricePerM: 0.075,
       completionPricePerM: 0.30,
       description: 'Lightweight and low latency for quick generation.'
@@ -45,8 +63,14 @@ export class GeminiProviderAdapter implements AIProviderAdapter {
       id: 'gemini-1.5-pro',
       name: 'Gemini 1.5 Pro',
       provider: 'gemini',
+      status: 'Active',
       category: 'reasoning',
       contextLength: 2097152,
+      inputTokenLimit: 2097152,
+      outputTokenLimit: 8192,
+      supportsText: true,
+      supportsImage: true,
+      supportsCode: true,
       promptPricePerM: 1.25,
       completionPricePerM: 5.00,
       description: 'Massive 2M token context for whole-codebase understanding.'
@@ -60,37 +84,140 @@ export class GeminiProviderAdapter implements AIProviderAdapter {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider: this.id, apiKey })
       });
-      const data = await res.json();
-      return {
-        valid: !!data.valid,
-        error: data.error,
-        availableModels: data.models
-      };
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          valid: !!data.valid,
+          error: data.error,
+          availableModels: data.models
+        };
+      }
+    } catch {}
+
+    // Direct browser validation fallback via official Gemini endpoint
+    try {
+      const directRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`
+      );
+      if (!directRes.ok) {
+        const errJson = await directRes.json().catch(() => ({}));
+        return {
+          valid: false,
+          error: (errJson as any)?.error?.message || `HTTP ${directRes.status}: Invalid Gemini API Key`
+        };
+      }
+      const data = await directRes.json();
+      const models = (data.models || []).map((m: any) => m.name.replace('models/', ''));
+      return { valid: true, availableModels: models.slice(0, 15) };
     } catch (err: any) {
       return { valid: false, error: err.message || 'Validation request failed' };
     }
   }
 
-  async listModels(): Promise<ModelOption[]> {
+  async listModels(apiKey?: string): Promise<ModelOption[]> {
+    try {
+      const res = await fetch('/api/ai/fetch-models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: this.id, apiKey })
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json.models) && json.models.length > 0) {
+          this.models = json.models;
+          return this.models;
+        }
+      }
+    } catch {}
+
+    // Direct browser query fallback
+    if (apiKey) {
+      try {
+        const directRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`
+        );
+        if (directRes.ok) {
+          const data = await directRes.json();
+          const dynamicModels: ModelOption[] = (data.models || [])
+            .filter((m: any) => (m.supportedGenerationMethods || []).includes('generateContent') || m.name.includes('gemini'))
+            .map((m: any) => {
+              const id = m.name.replace('models/', '');
+              const descLower = (m.description || '').toLowerCase();
+              const isDeprecated = descLower.includes('deprecated') || descLower.includes('discontinued') || id.includes('deprecated');
+              const isShutdown = descLower.includes('shutdown') || descLower.includes('retired');
+              const isPreview = id.includes('preview') || id.includes('exp') || descLower.includes('preview');
+
+              let status: 'Active' | 'Preview' | 'Deprecated' | 'Shutdown' = 'Active';
+              if (isShutdown) status = 'Shutdown';
+              else if (isDeprecated) status = 'Deprecated';
+              else if (isPreview) status = 'Preview';
+
+              return {
+                id,
+                name: m.displayName || id,
+                provider: 'gemini' as const,
+                status,
+                contextLength: m.inputTokenLimit || 1048576,
+                inputTokenLimit: m.inputTokenLimit,
+                outputTokenLimit: m.outputTokenLimit,
+                supportsText: true,
+                supportsImage: id.includes('gemini') || descLower.includes('multimodal'),
+                supportsCode: true,
+                description: m.description || `Google Gemini formal model (${id})`
+              };
+            });
+
+          if (dynamicModels.length > 0) {
+            this.models = dynamicModels;
+            return this.models;
+          }
+        }
+      } catch {}
+    }
+
     return this.models;
   }
 
   async streamText(params: StreamParams): Promise<GenerateResult> {
     const { model, messages, apiKey, temperature, maxTokens, onChunk, signal } = params;
 
-    const res = await fetch('/api/ai/stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        provider: this.id,
-        model,
-        messages,
-        apiKey,
-        temperature,
-        maxTokens
-      }),
-      signal
-    });
+    let res: Response | null = null;
+    try {
+      res = await fetch('/api/ai/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: this.id,
+          model,
+          messages,
+          apiKey,
+          temperature,
+          maxTokens
+        }),
+        signal
+      });
+    } catch {}
+
+    // If server proxy is not running or failed, stream directly to Gemini REST SSE
+    if (!res || !res.ok) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?key=${apiKey.trim()}&alt=sse`;
+      const contents = messages.map((m: any) => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }]
+      }));
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents,
+          generationConfig: {
+            temperature: temperature ?? 0.7,
+            maxOutputTokens: maxTokens ?? 4096
+          }
+        }),
+        signal
+      });
+    }
 
     if (!res.ok) {
       const err = await res.text();
@@ -134,7 +261,6 @@ export class GeminiProviderAdapter implements AIProviderAdapter {
       }
     }
 
-    // Estimate tokens
     const promptLen = messages.reduce((acc, m) => acc + m.content.length, 0);
     const promptTokens = Math.max(1, Math.round(promptLen / 4));
     const completionTokens = Math.max(1, Math.round(accumulated.length / 4));

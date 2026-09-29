@@ -15,8 +15,12 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
       id: 'gpt-4o',
       name: 'GPT-4o',
       provider: 'openai',
+      status: 'Active',
       category: 'recommended',
       contextLength: 128000,
+      supportsText: true,
+      supportsImage: true,
+      supportsCode: true,
       promptPricePerM: 2.50,
       completionPricePerM: 10.00,
       description: 'Flagship omni model, exceptional across code, mathematics, and complex reasoning.'
@@ -25,8 +29,12 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
       id: 'gpt-4o-mini',
       name: 'GPT-4o mini',
       provider: 'openai',
+      status: 'Active',
       category: 'fast',
       contextLength: 128000,
+      supportsText: true,
+      supportsImage: true,
+      supportsCode: true,
       promptPricePerM: 0.15,
       completionPricePerM: 0.60,
       description: 'Fast, lightweight and affordable for routine tasks and quick prototyping.'
@@ -35,8 +43,12 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
       id: 'o3-mini',
       name: 'o3-mini',
       provider: 'openai',
+      status: 'Active',
       category: 'reasoning',
       contextLength: 200000,
+      supportsText: true,
+      supportsImage: false,
+      supportsCode: true,
       promptPricePerM: 1.10,
       completionPricePerM: 4.40,
       description: 'Specialized deep reasoning model designed for competitive programming and STEM.'
@@ -45,8 +57,12 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
       id: 'o1',
       name: 'o1',
       provider: 'openai',
+      status: 'Active',
       category: 'reasoning',
       contextLength: 200000,
+      supportsText: true,
+      supportsImage: true,
+      supportsCode: true,
       promptPricePerM: 15.00,
       completionPricePerM: 60.00,
       description: 'Full reasoning flagship model with extensive chain-of-thought.'
@@ -60,17 +76,94 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider: this.id, apiKey })
       });
-      const data = await res.json();
-      return {
-        valid: !!data.valid,
-        error: data.error
-      };
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          valid: !!data.valid,
+          error: data.error
+        };
+      }
+    } catch {}
+
+    // Direct browser query fallback
+    try {
+      const directRes = await fetch('https://api.openai.com/v1/models', {
+        headers: { Authorization: `Bearer ${apiKey.trim()}` }
+      });
+      if (!directRes.ok) {
+        const errJson = await directRes.json().catch(() => ({}));
+        return {
+          valid: false,
+          error: (errJson as any)?.error?.message || `HTTP ${directRes.status}: Invalid OpenAI API Key`
+        };
+      }
+      return { valid: true };
     } catch (err: any) {
       return { valid: false, error: err.message || 'Validation request failed' };
     }
   }
 
-  async listModels(): Promise<ModelOption[]> {
+  async listModels(apiKey?: string): Promise<ModelOption[]> {
+    try {
+      const res = await fetch('/api/ai/fetch-models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: this.id, apiKey })
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json.models) && json.models.length > 0) {
+          this.models = json.models;
+          return this.models;
+        }
+      }
+    } catch {}
+
+    // Direct browser query fallback
+    if (apiKey) {
+      try {
+        const directRes = await fetch('https://api.openai.com/v1/models', {
+          headers: { Authorization: `Bearer ${apiKey.trim()}` }
+        });
+        if (directRes.ok) {
+          const data = await directRes.json();
+          const dynamicModels: ModelOption[] = (data.data || [])
+            .filter((m: any) =>
+              m.id.startsWith('gpt-') ||
+              m.id.startsWith('o1') ||
+              m.id.startsWith('o3') ||
+              m.id.startsWith('o4') ||
+              m.id.startsWith('chatgpt-')
+            )
+            .map((m: any) => {
+              const id = m.id;
+              const isPreview = id.includes('preview');
+              const isDeprecated = id.includes('0301') || id.includes('0613');
+              let status: 'Active' | 'Preview' | 'Deprecated' | 'Shutdown' = 'Active';
+              if (isDeprecated) status = 'Deprecated';
+              else if (isPreview) status = 'Preview';
+
+              return {
+                id,
+                name: id,
+                provider: 'openai' as const,
+                status,
+                contextLength: id.includes('o1') || id.includes('o3') ? 200000 : 128000,
+                supportsText: true,
+                supportsImage: id.includes('4o') || id.includes('vision'),
+                supportsCode: true,
+                description: `OpenAI official model (${id})`
+              };
+            });
+
+          if (dynamicModels.length > 0) {
+            this.models = dynamicModels;
+            return this.models;
+          }
+        }
+      } catch {}
+    }
+
     return this.models;
   }
 

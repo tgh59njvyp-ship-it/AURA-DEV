@@ -5,7 +5,7 @@ export class CustomOpenAIProviderAdapter implements AIProviderAdapter {
   id: ProviderId = 'custom';
   name = 'Custom (OpenAI Compatible)';
   tagline = 'Connect any OpenAI-compatible API: Ollama, vLLM, LM Studio, DeepSeek, xAI, Mistral';
-  defaultModel = 'default-model';
+  defaultModel = 'custom-model-1';
   keyPlaceholder = 'Custom API Key or Bearer Token';
   websiteUrl = 'https://platform.openai.com/docs/api-reference';
   consoleUrl = 'http://localhost:11434';
@@ -15,8 +15,12 @@ export class CustomOpenAIProviderAdapter implements AIProviderAdapter {
       id: 'custom-model-1',
       name: 'Custom Model (Base URL Defined)',
       provider: 'custom',
+      status: 'Active',
       category: 'recommended',
       contextLength: 128000,
+      supportsText: true,
+      supportsImage: false,
+      supportsCode: true,
       promptPricePerM: 0.20,
       completionPricePerM: 0.50,
       description: 'Custom endpoint specified via Base URL'
@@ -35,17 +39,79 @@ export class CustomOpenAIProviderAdapter implements AIProviderAdapter {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider: 'custom', apiKey, baseUrl })
       });
-      const data = await res.json();
-      return {
-        valid: !!data.valid,
-        error: data.error
-      };
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          valid: !!data.valid,
+          error: data.error
+        };
+      }
+    } catch {}
+
+    // Direct browser query fallback
+    try {
+      const targetUrl = (baseUrl || 'http://localhost:11434/v1').replace(/\/+$/, '') + '/models';
+      const headers: Record<string, string> = {};
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+      const directRes = await fetch(targetUrl, { headers });
+      if (!directRes.ok) {
+        return { valid: false, error: `HTTP ${directRes.status}: Unable to connect to ${targetUrl}` };
+      }
+      return { valid: true };
     } catch (err: any) {
       return { valid: false, error: err.message || 'Custom validation failed' };
     }
   }
 
-  async listModels(): Promise<ModelOption[]> {
+  async listModels(apiKey?: string, baseUrl?: string): Promise<ModelOption[]> {
+    try {
+      const res = await fetch('/api/ai/fetch-models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'custom', apiKey, baseUrl })
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json.models) && json.models.length > 0) {
+          this.models = json.models.map((m: any) => ({
+            ...m,
+            provider: this.id
+          }));
+          return this.models;
+        }
+      }
+    } catch {}
+
+    // Direct browser query fallback
+    try {
+      const targetUrl = (baseUrl || 'http://localhost:11434/v1').replace(/\/+$/, '') + '/models';
+      const headers: Record<string, string> = {};
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+      const directRes = await fetch(targetUrl, { headers });
+      if (directRes.ok) {
+        const data = await directRes.json();
+        const rawList = data.data || data.models || [];
+        const dynamicModels: ModelOption[] = rawList.map((m: any) => {
+          const id = m.id || m.name;
+          return {
+            id,
+            name: id,
+            provider: this.id,
+            status: 'Active' as const,
+            contextLength: 128000,
+            supportsText: true,
+            supportsImage: false,
+            supportsCode: true,
+            description: `Model retrieved from ${targetUrl}`
+          };
+        });
+        if (dynamicModels.length > 0) {
+          this.models = dynamicModels;
+          return this.models;
+        }
+      }
+    } catch {}
+
     return this.models;
   }
 

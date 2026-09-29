@@ -13,7 +13,8 @@ import {
   ExternalLink,
   Code,
   X,
-  Play
+  Play,
+  AlertTriangle
 } from 'lucide-react';
 
 export const ChatView: React.FC = () => {
@@ -25,7 +26,8 @@ export const ChatView: React.FC = () => {
     evaluateAutoRoute,
     isDemoMode,
     setActiveTab,
-    showNotification
+    showNotification,
+    pinnedModelDeprecatedWarning
   } = useApp();
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
@@ -215,6 +217,25 @@ Bring your own API key to access Google Gemini, OpenAI, OpenRouter, Groq, Anthro
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)] bg-neutral-950">
+      {/* Deprecated Fixed Model Warning Banner */}
+      {pinnedModelDeprecatedWarning && (
+        <div className="px-6 py-3 bg-rose-950/40 border-b border-rose-500/40 text-rose-200 flex items-center justify-between text-xs animate-in slide-in-from-top-1">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <div>
+              <span className="font-bold text-white mr-1.5">Your fixed model is deprecated:</span>
+              <span className="text-rose-300">「{pinnedModelDeprecatedWarning}」Please select another available model.</span>
+            </div>
+          </div>
+          <button
+            onClick={() => setActiveTab('models')}
+            className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-[11px] shrink-0 transition cursor-pointer"
+          >
+            モデル一覧で選択
+          </button>
+        </div>
+      )}
+
       {/* Chat Top Context Bar */}
       <div className="px-6 py-2.5 border-b border-neutral-800 bg-neutral-950/70 flex items-center justify-between text-xs text-neutral-400">
         <div className="flex items-center gap-3">

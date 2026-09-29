@@ -128,6 +128,76 @@ app.post('/api/ai/validate', async (req: Request, res: Response): Promise<void> 
         return;
       }
 
+      case 'mistral': {
+        const response = await safeFetch('https://api.mistral.ai/v1/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as any)?.message || `HTTP ${response.status}: Invalid Mistral API key`;
+          res.status(200).json({ valid: false, error: errMsg });
+          return;
+        }
+        res.json({ valid: true });
+        return;
+      }
+
+      case 'deepseek': {
+        const response = await safeFetch('https://api.deepseek.com/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as any)?.error?.message || `HTTP ${response.status}: Invalid DeepSeek API key`;
+          res.status(200).json({ valid: false, error: errMsg });
+          return;
+        }
+        res.json({ valid: true });
+        return;
+      }
+
+      case 'xai': {
+        const response = await safeFetch('https://api.x.ai/v1/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as any)?.error?.message || `HTTP ${response.status}: Invalid xAI API key`;
+          res.status(200).json({ valid: false, error: errMsg });
+          return;
+        }
+        res.json({ valid: true });
+        return;
+      }
+
+      case 'cerebras': {
+        const response = await safeFetch('https://api.cerebras.ai/v1/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as any)?.error?.message || `HTTP ${response.status}: Invalid Cerebras API key`;
+          res.status(200).json({ valid: false, error: errMsg });
+          return;
+        }
+        res.json({ valid: true });
+        return;
+      }
+
+      case 'github': {
+        const response = await safeFetch('https://models.inference.ai.azure.com/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as any)?.error?.message || `HTTP ${response.status}: Invalid GitHub Token`;
+          res.status(200).json({ valid: false, error: errMsg });
+          return;
+        }
+        res.json({ valid: true });
+        return;
+      }
+
       case 'custom': {
         const targetUrl = (baseUrl || 'http://localhost:11434/v1').replace(/\/+$/, '') + '/models';
         const response = await safeFetch(targetUrl, {
@@ -168,6 +238,448 @@ app.get('/api/ai/openrouter-models', async (_req: Request, res: Response): Promi
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to fetch OpenRouter models' });
+  }
+});
+
+// 2b. Dynamic Model Fetcher for any provider
+app.post('/api/ai/fetch-models', async (req: Request, res: Response): Promise<void> => {
+  const { provider, apiKey, baseUrl } = req.body;
+  const cleanKey = (apiKey || '').trim();
+
+  try {
+    switch (provider) {
+      case 'gemini': {
+        const keyToUse = cleanKey || process.env.GEMINI_API_KEY || '';
+        if (!keyToUse) {
+          res.status(400).json({ error: 'Gemini API Key is required to query live models' });
+          return;
+        }
+        const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${keyToUse}`;
+        const response = await safeFetch(url, { method: 'GET' });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as any)?.error?.message || `HTTP ${response.status}: Failed to fetch Gemini models`;
+          res.status(response.status).json({ error: errMsg });
+          return;
+        }
+        const data: any = await response.json();
+        const models = (data.models || [])
+          .filter((m: any) => (m.supportedGenerationMethods || []).includes('generateContent') || m.name.includes('gemini'))
+          .map((m: any) => {
+            const id = m.name.replace('models/', '');
+            const descLower = (m.description || '').toLowerCase();
+            const isDeprecated = descLower.includes('deprecated') || descLower.includes('discontinued') || id.includes('deprecated');
+            const isShutdown = descLower.includes('shutdown') || descLower.includes('retired');
+            const isPreview = id.includes('preview') || id.includes('exp') || descLower.includes('preview') || descLower.includes('experimental');
+
+            let status: 'Active' | 'Preview' | 'Deprecated' | 'Shutdown' = 'Active';
+            if (isShutdown) status = 'Shutdown';
+            else if (isDeprecated) status = 'Deprecated';
+            else if (isPreview) status = 'Preview';
+
+            return {
+              id,
+              name: m.displayName || id,
+              provider: 'gemini',
+              status,
+              contextLength: m.inputTokenLimit || 1048576,
+              inputTokenLimit: m.inputTokenLimit,
+              outputTokenLimit: m.outputTokenLimit,
+              supportsText: true,
+              supportsImage: id.includes('gemini') || descLower.includes('multimodal'),
+              supportsCode: true,
+              description: m.description || `Google Gemini formal model (${id})`
+            };
+          });
+
+        res.json({ models });
+        return;
+      }
+
+      case 'openai': {
+        if (!cleanKey) {
+          res.status(400).json({ error: 'OpenAI API key is required to query live models' });
+          return;
+        }
+        const response = await safeFetch('https://api.openai.com/v1/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as any)?.error?.message || `HTTP ${response.status}: Failed to fetch OpenAI models`;
+          res.status(response.status).json({ error: errMsg });
+          return;
+        }
+        const data: any = await response.json();
+        const models = (data.data || [])
+          .filter((m: any) =>
+            m.id.startsWith('gpt-') ||
+            m.id.startsWith('o1') ||
+            m.id.startsWith('o3') ||
+            m.id.startsWith('chatgpt-')
+          )
+          .sort((a: any, b: any) => (b.created || 0) - (a.created || 0))
+          .map((m: any) => {
+            const id = m.id;
+            const isPreview = id.includes('preview') || id.includes('preview-');
+            const isDeprecated = id.includes('0301') || id.includes('0613') || id.includes('deprecated');
+
+            let status: 'Active' | 'Preview' | 'Deprecated' | 'Shutdown' = 'Active';
+            if (isDeprecated) status = 'Deprecated';
+            else if (isPreview) status = 'Preview';
+
+            let contextLength = 128000;
+            if (id.includes('o1') || id.includes('o3')) contextLength = 200000;
+
+            return {
+              id,
+              name: id,
+              provider: 'openai',
+              status,
+              contextLength,
+              supportsText: true,
+              supportsImage: id.includes('4o') || id.includes('vision'),
+              supportsCode: true,
+              description: `OpenAI formal model (${id})`
+            };
+          });
+
+        res.json({ models });
+        return;
+      }
+
+      case 'groq': {
+        if (!cleanKey) {
+          res.status(400).json({ error: 'Groq API key is required to query live models' });
+          return;
+        }
+        const response = await safeFetch('https://api.groq.com/openai/v1/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as any)?.error?.message || `HTTP ${response.status}: Failed to fetch Groq models`;
+          res.status(response.status).json({ error: errMsg });
+          return;
+        }
+        const data: any = await response.json();
+        const models = (data.data || []).map((m: any) => {
+          const id = m.id;
+          let status: 'Active' | 'Preview' | 'Deprecated' | 'Shutdown' = 'Active';
+          if (m.active === false) status = 'Deprecated';
+          else if (id.includes('preview')) status = 'Preview';
+
+          return {
+            id,
+            name: id,
+            provider: 'groq',
+            status,
+            contextLength: m.context_window || 128000,
+            supportsText: true,
+            supportsImage: id.includes('vision'),
+            supportsCode: true,
+            description: `Groq LPU ultra-fast model (${id})`
+          };
+        });
+
+        res.json({ models });
+        return;
+      }
+
+      case 'anthropic': {
+        if (!cleanKey) {
+          res.status(400).json({ error: 'Anthropic API key is required' });
+          return;
+        }
+        const response = await safeFetch('https://api.anthropic.com/v1/models', {
+          headers: {
+            'x-api-key': cleanKey,
+            'anthropic-version': '2023-06-01'
+          }
+        });
+        if (response.ok) {
+          const data: any = await response.json();
+          const models = (data.data || []).map((m: any) => ({
+            id: m.id,
+            name: m.display_name || m.id,
+            provider: 'anthropic',
+            status: m.id.includes('preview') ? 'Preview' : 'Active',
+            contextLength: 200000,
+            supportsText: true,
+            supportsImage: true,
+            supportsCode: true,
+            description: `Anthropic Claude formal model (${m.id})`
+          }));
+          res.json({ models });
+          return;
+        }
+
+        // If Anthropic models API is not yet enabled for the key, return formal catalog
+        const defaultAnthropic = [
+          { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', status: 'Active', contextLength: 200000 },
+          { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', status: 'Active', contextLength: 200000 },
+          { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', status: 'Active', contextLength: 200000 },
+          { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', status: 'Active', contextLength: 200000 }
+        ].map((m) => ({
+          ...m,
+          provider: 'anthropic',
+          supportsText: true,
+          supportsImage: true,
+          supportsCode: true,
+          description: `Anthropic formal model (${m.id})`
+        }));
+        res.json({ models: defaultAnthropic });
+        return;
+      }
+
+      case 'openrouter': {
+        const response = await safeFetch('https://openrouter.ai/api/v1/models', {
+          headers: {
+            'HTTP-Referer': 'https://auradev.workspace',
+            'X-Title': 'AURA DEV'
+          }
+        });
+        if (!response.ok) {
+          res.status(response.status).json({ error: 'Failed to fetch OpenRouter models' });
+          return;
+        }
+        const data: any = await response.json();
+        const models = (data.data || []).slice(0, 150).map((m: any) => {
+          const id = m.id;
+          const desc = (m.description || '').toLowerCase();
+          let status: 'Active' | 'Preview' | 'Deprecated' | 'Shutdown' = 'Active';
+          if (desc.includes('deprecated') || id.includes('deprecated')) status = 'Deprecated';
+          else if (id.includes('preview') || id.includes(':free')) status = 'Preview';
+
+          const promptUSD = parseFloat(m.pricing?.prompt || '0') * 1_000_000;
+          const compUSD = parseFloat(m.pricing?.completion || '0') * 1_000_000;
+
+          return {
+            id,
+            name: m.name || id,
+            provider: 'openrouter',
+            status,
+            contextLength: m.context_length || 128000,
+            promptPricePerM: Number(promptUSD.toFixed(4)),
+            completionPricePerM: Number(compUSD.toFixed(4)),
+            supportsText: true,
+            supportsImage: m.architecture?.modality?.includes('image') || desc.includes('vision'),
+            supportsCode: true,
+            description: m.description ? m.description.slice(0, 140) + '...' : `OpenRouter model (${id})`
+          };
+        });
+
+        res.json({ models });
+        return;
+      }
+
+      case 'mistral': {
+        if (!cleanKey) {
+          res.status(400).json({ error: 'Mistral API key is required to query live models' });
+          return;
+        }
+        const response = await safeFetch('https://api.mistral.ai/v1/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as any)?.message || `HTTP ${response.status}: Failed to fetch Mistral models`;
+          res.status(response.status).json({ error: errMsg });
+          return;
+        }
+        const data: any = await response.json();
+        const models = (data.data || []).map((m: any) => {
+          const id = m.id;
+          const isDeprecated = m.deprecated || id.includes('deprecated');
+          let status: 'Active' | 'Preview' | 'Deprecated' | 'Shutdown' = 'Active';
+          if (isDeprecated) status = 'Deprecated';
+          else if (id.includes('preview')) status = 'Preview';
+
+          return {
+            id,
+            name: m.name || id,
+            provider: 'mistral',
+            status,
+            contextLength: m.max_context_length || 128000,
+            supportsText: true,
+            supportsImage: !!(m.capabilities?.vision || id.includes('pixtral')),
+            supportsCode: true,
+            description: m.description || `Mistral formal model (${id})`
+          };
+        });
+        res.json({ models });
+        return;
+      }
+
+      case 'deepseek': {
+        if (!cleanKey) {
+          res.status(400).json({ error: 'DeepSeek API key is required to query live models' });
+          return;
+        }
+        const response = await safeFetch('https://api.deepseek.com/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as any)?.error?.message || `HTTP ${response.status}: Failed to fetch DeepSeek models`;
+          res.status(response.status).json({ error: errMsg });
+          return;
+        }
+        const data: any = await response.json();
+        const models = (data.data || []).map((m: any) => {
+          const id = m.id;
+          return {
+            id,
+            name: id === 'deepseek-chat' ? 'DeepSeek V3' : id === 'deepseek-reasoner' ? 'DeepSeek R1' : id,
+            provider: 'deepseek',
+            status: 'Active' as const,
+            contextLength: 128000,
+            supportsText: true,
+            supportsImage: false,
+            supportsCode: true,
+            promptPricePerM: id === 'deepseek-reasoner' ? 0.55 : 0.14,
+            completionPricePerM: id === 'deepseek-reasoner' ? 2.19 : 0.28,
+            description: `DeepSeek formal model (${id})`
+          };
+        });
+        res.json({ models });
+        return;
+      }
+
+      case 'xai': {
+        if (!cleanKey) {
+          res.status(400).json({ error: 'xAI API key is required to query live models' });
+          return;
+        }
+        const response = await safeFetch('https://api.x.ai/v1/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as any)?.error?.message || `HTTP ${response.status}: Failed to fetch xAI models`;
+          res.status(response.status).json({ error: errMsg });
+          return;
+        }
+        const data: any = await response.json();
+        const models = (data.data || []).map((m: any) => {
+          const id = m.id;
+          return {
+            id,
+            name: id,
+            provider: 'xai',
+            status: id.includes('preview') ? 'Preview' as const : 'Active' as const,
+            contextLength: 131072,
+            supportsText: true,
+            supportsImage: id.includes('vision') || id.includes('grok-2'),
+            supportsCode: true,
+            description: `xAI Grok formal model (${id})`
+          };
+        });
+        res.json({ models });
+        return;
+      }
+
+      case 'cerebras': {
+        if (!cleanKey) {
+          res.status(400).json({ error: 'Cerebras API key is required to query live models' });
+          return;
+        }
+        const response = await safeFetch('https://api.cerebras.ai/v1/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as any)?.error?.message || `HTTP ${response.status}: Failed to fetch Cerebras models`;
+          res.status(response.status).json({ error: errMsg });
+          return;
+        }
+        const data: any = await response.json();
+        const models = (data.data || []).map((m: any) => {
+          const id = m.id;
+          return {
+            id,
+            name: id,
+            provider: 'cerebras',
+            status: 'Active' as const,
+            contextLength: 128000,
+            supportsText: true,
+            supportsImage: false,
+            supportsCode: true,
+            description: `Cerebras ultra-fast wafer-scale model (${id})`
+          };
+        });
+        res.json({ models });
+        return;
+      }
+
+      case 'github': {
+        if (!cleanKey) {
+          res.status(400).json({ error: 'GitHub Personal Access Token is required' });
+          return;
+        }
+        const response = await safeFetch('https://models.inference.ai.azure.com/models', {
+          headers: { Authorization: `Bearer ${cleanKey}` }
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as any)?.error?.message || `HTTP ${response.status}: Failed to fetch GitHub models`;
+          res.status(response.status).json({ error: errMsg });
+          return;
+        }
+        const data: any = await response.json();
+        const rawList = Array.isArray(data) ? data : data.data || [];
+        const models = rawList.map((m: any) => {
+          const id = m.name || m.id;
+          return {
+            id,
+            name: m.friendly_name || id,
+            provider: 'github',
+            status: 'Active' as const,
+            contextLength: 128000,
+            supportsText: true,
+            supportsImage: true,
+            supportsCode: true,
+            description: m.summary || `GitHub Models catalog (${id})`
+          };
+        });
+        res.json({ models });
+        return;
+      }
+
+      case 'custom': {
+        const targetUrl = (baseUrl || 'http://localhost:11434/v1').replace(/\/+$/, '') + '/models';
+        const headers: Record<string, string> = {};
+        if (cleanKey) headers['Authorization'] = `Bearer ${cleanKey}`;
+        const response = await safeFetch(targetUrl, { headers });
+        if (!response.ok) {
+          res.status(response.status).json({ error: `Failed to fetch models from ${targetUrl}` });
+          return;
+        }
+        const data: any = await response.json();
+        const models = (data.data || data.models || []).map((m: any) => {
+          const id = m.id || m.name;
+          return {
+            id,
+            name: id,
+            provider: 'custom',
+            status: 'Active' as const,
+            contextLength: 128000,
+            supportsText: true,
+            supportsImage: false,
+            supportsCode: true,
+            description: `Custom model from ${targetUrl}`
+          };
+        });
+        res.json({ models });
+        return;
+      }
+
+      default: {
+        res.status(400).json({ error: `Unsupported provider for model query: ${provider}` });
+      }
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Error querying models from provider' });
   }
 });
 
@@ -367,6 +879,8 @@ app.post('/api/ai/stream', async (req: Request, res: Response): Promise<void> =>
       endpoint = 'https://api.mistral.ai/v1/chat/completions';
     } else if (provider === 'cerebras') {
       endpoint = 'https://api.cerebras.ai/v1/chat/completions';
+    } else if (provider === 'github') {
+      endpoint = 'https://models.inference.ai.azure.com/chat/completions';
     }
 
     const payload = {

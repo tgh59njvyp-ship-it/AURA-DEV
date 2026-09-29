@@ -15,8 +15,12 @@ export class AnthropicProviderAdapter implements AIProviderAdapter {
       id: 'claude-3-7-sonnet-20250219',
       name: 'Claude 3.7 Sonnet',
       provider: 'anthropic',
+      status: 'Active',
       category: 'recommended',
       contextLength: 200000,
+      supportsText: true,
+      supportsImage: true,
+      supportsCode: true,
       promptPricePerM: 3.00,
       completionPricePerM: 15.00,
       description: 'Hybrid reasoning and instant response model with unmatched software engineering capability.'
@@ -25,8 +29,12 @@ export class AnthropicProviderAdapter implements AIProviderAdapter {
       id: 'claude-3-5-sonnet-20241022',
       name: 'Claude 3.5 Sonnet',
       provider: 'anthropic',
+      status: 'Active',
       category: 'coding',
       contextLength: 200000,
+      supportsText: true,
+      supportsImage: true,
+      supportsCode: true,
       promptPricePerM: 3.00,
       completionPricePerM: 15.00,
       description: 'Industry benchmark for code architecture, refactoring, and complex tool usage.'
@@ -35,8 +43,12 @@ export class AnthropicProviderAdapter implements AIProviderAdapter {
       id: 'claude-3-5-haiku-20241022',
       name: 'Claude 3.5 Haiku',
       provider: 'anthropic',
+      status: 'Active',
       category: 'fast',
       contextLength: 200000,
+      supportsText: true,
+      supportsImage: true,
+      supportsCode: true,
       promptPricePerM: 0.80,
       completionPricePerM: 4.00,
       description: 'Lightning-fast responses with Sonnet-level intelligence on common development tasks.'
@@ -60,8 +72,22 @@ export class AnthropicProviderAdapter implements AIProviderAdapter {
     }
   }
 
-  async listModels(): Promise<ModelOption[]> {
-    return this.models;
+  async listModels(apiKey?: string): Promise<ModelOption[]> {
+    try {
+      const res = await fetch('/api/ai/fetch-models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: this.id, apiKey })
+      });
+      if (!res.ok) return this.models;
+      const json = await res.json();
+      if (Array.isArray(json.models) && json.models.length > 0) {
+        this.models = json.models;
+      }
+      return this.models;
+    } catch {
+      return this.models;
+    }
   }
 
   async streamText(params: StreamParams): Promise<GenerateResult> {

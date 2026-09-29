@@ -55,6 +55,17 @@ interface AppContextType {
   removeApiKey: (id: ProviderId) => void;
   refreshOpenRouterCatalog: () => Promise<void>;
 
+  // Pinned / Fixed Models
+  pinnedModels: Record<string, string>;
+  pinModel: (providerId: ProviderId, modelId: string) => void;
+  unpinModel: (providerId: ProviderId) => void;
+  isModelPinned: (providerId: ProviderId, modelId: string) => boolean;
+
+  // Dynamic Provider Model Fetcher
+  fetchModelsForProvider: (providerId: ProviderId) => Promise<ModelOption[]>;
+  fetchAllConnectedModels: () => Promise<void>;
+  pinnedModelDeprecatedWarning: string | null;
+
   // Demo Mode
   isDemoMode: boolean;
   setIsDemoMode: (demo: boolean) => void;
@@ -293,6 +304,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isAutoRouter, setIsAutoRouter] = useState<boolean>(false);
   const [autoRouterInfo, setAutoRouterInfo] = useState<{ provider: ProviderId; model: string; reason: string } | null>(null);
 
+  // Pinned Models state per provider
+  const [pinnedModels, setPinnedModels] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem('aura_dev_pinned_models_v1');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+
   const [projects, setProjects] = useState<Project[]>(getStoredProjects);
   const [activeProjectId, setActiveProjectId] = useState<string>(projects[0]?.id || 'proj_pokecard');
 
@@ -354,6 +375,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsDemoMode(true);
     }
 
+    // Load cached dynamic models if any
+    try {
+      const cachedModelsRaw = localStorage.getItem('aura_dev_dynamic_models_v1');
+      if (cachedModelsRaw) {
+        const cachedModels = JSON.parse(cachedModelsRaw);
+        setProviders((curr) =>
+          curr.map((p) => {
+            const dynamicList = cachedModels[p.id];
+            if (Array.isArray(dynamicList) && dynamicList.length > 0) {
+              return { ...p, models: dynamicList };
+            }
+            return p;
+          })
+        );
+      }
+    } catch {}
+
     // Also fetch OpenRouter models dynamically in background
     openRouterAdapter.fetchDynamicModels().then((models) => {
       if (models.length > 0) {
@@ -365,6 +403,175 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const toggleSidebar = useCallback(() => setIsSidebarCollapsed((v) => !v), []);
+
+  // Fetch models directly from provider API without hardcoding
+  const fetchModelsForProvider = useCallback(async (providerId: ProviderId, explicitApiKey?: string): Promise<ModelOption[]> => {
+    const prov = providers.find((p) => p.id === providerId);
+    const keyToUse = explicitApiKey || prov?.apiKey || '';
+
+    setProviders((prev) =>
+      prev.map((p) => (p.id === providerId ? { ...p, isFetchingModels: true } : p))
+    );
+
+    try {
+      const res = await fetch('/api/ai/fetch-models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: providerId,
+          apiKey: keyToUse,
+          baseUrl: prov?.baseUrl
+        })
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        const msg = errJson.error || `HTTP ${res.status}: Failed to fetch models`;
+        setProviders((prev) =>
+          prev.map((p) => (p.id === providerId ? { ...p, isFetchingModels: false } : p))
+        );
+        showNotification('error', `${prov?.name || providerId}: ${msg}`);
+        return prov?.models || [];
+      }
+
+      const data = await res.json();
+      const currentPinned = pinnedModels[providerId];
+      const fetched: ModelOption[] = (data.models || []).map((m: any) => ({
+        ...m,
+        isPinned: currentPinned === m.id,
+        fetchedAt: Date.now()
+      }));
+
+      if (fetched.length > 0) {
+        setProviders((prev) =>
+          prev.map((p) => {
+            if (p.id !== providerId) return p;
+            return {
+              ...p,
+              isFetchingModels: false,
+              models: fetched,
+              lastModelsFetched: new Date().toLocaleTimeString()
+            };
+          })
+        );
+
+        // Cache dynamic models in local storage
+        try {
+          const storedDynamic = JSON.parse(localStorage.getItem('aura_dev_dynamic_models_v1') || '{}');
+          storedDynamic[providerId] = fetched;
+          localStorage.setItem('aura_dev_dynamic_models_v1', JSON.stringify(storedDynamic));
+        } catch {}
+
+        showNotification('success', `${prov?.name || providerId}: ${fetched.length} 件のモデルをAPIから更新しました`);
+
+        // Check if currently pinned model became deprecated or is missing
+        if (currentPinned) {
+          const pinnedObj = fetched.find((m) => m.id === currentPinned);
+          if (!pinnedObj) {
+            showNotification('error', `注意: 固定中のモデル (${currentPinned}) はプロバイダーAPIの利用可能一覧に見つかりません。`);
+          } else if (pinnedObj.status === 'Deprecated' || pinnedObj.status === 'Shutdown') {
+            showNotification('error', `警告: 固定中のモデル (${currentPinned}) は現在利用不可 (${pinnedObj.status}) です。新しいモデルを選択してください。`);
+          }
+        }
+
+        return fetched;
+      }
+    } catch (err: any) {
+      setProviders((prev) =>
+        prev.map((p) => (p.id === providerId ? { ...p, isFetchingModels: false } : p))
+      );
+      showNotification('error', `${prov?.name || providerId}: ${err.message || 'モデル取得エラー'}`);
+    }
+
+    return prov?.models || [];
+  }, [providers, pinnedModels, showNotification]);
+
+  const fetchAllConnectedModels = useCallback(async () => {
+    const connected = providers.filter((p) => p.isConnected && p.apiKey.trim().length > 0);
+    for (const prov of connected) {
+      await fetchModelsForProvider(prov.id);
+    }
+  }, [providers, fetchModelsForProvider]);
+
+  // Model Pinning ("固定")
+  const pinModel = useCallback((providerId: ProviderId, modelId: string) => {
+    const prov = providers.find((p) => p.id === providerId);
+    const targetModel = prov?.models.find((m) => m.id === modelId);
+
+    // Deprecated or Shutdown models cannot be pinned
+    if (targetModel && (targetModel.status === 'Deprecated' || targetModel.status === 'Shutdown')) {
+      showNotification(
+        'error',
+        `このモデル (${modelId}) は現在 ${targetModel.status} のため固定できません。利用可能なモデルを選択してください。`
+      );
+      return;
+    }
+
+    setPinnedModels((prev) => {
+      const next = { ...prev, [providerId]: modelId };
+      try {
+        localStorage.setItem('aura_dev_pinned_models_v1', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    // Update isPinned flag on provider's models
+    setProviders((prev) =>
+      prev.map((p) => {
+        if (p.id !== providerId) return p;
+        return {
+          ...p,
+          pinnedModelId: modelId,
+          models: p.models.map((m) => ({ ...m, isPinned: m.id === modelId }))
+        };
+      })
+    );
+
+    setActiveProvider(providerId);
+    setActiveModel(modelId);
+    setIsAutoRouter(false);
+    showNotification('success', `${prov?.name || providerId} のモデルを「${targetModel?.name || modelId}」に固定しました`);
+  }, [providers, showNotification]);
+
+  const unpinModel = useCallback((providerId: ProviderId) => {
+    setPinnedModels((prev) => {
+      const next = { ...prev };
+      delete next[providerId];
+      try {
+        localStorage.setItem('aura_dev_pinned_models_v1', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    setProviders((prev) =>
+      prev.map((p) => {
+        if (p.id !== providerId) return p;
+        return {
+          ...p,
+          pinnedModelId: undefined,
+          models: p.models.map((m) => ({ ...m, isPinned: false }))
+        };
+      })
+    );
+
+    showNotification('info', `固定を解除しました`);
+  }, [showNotification]);
+
+  const isModelPinned = useCallback((providerId: ProviderId, modelId: string) => {
+    return pinnedModels[providerId] === modelId;
+  }, [pinnedModels]);
+
+  // Deprecated pinned model check for active provider
+  const pinnedModelDeprecatedWarning = useMemo(() => {
+    const pinnedId = pinnedModels[activeProvider];
+    if (!pinnedId) return null;
+    const prov = providers.find((p) => p.id === activeProvider);
+    const modelObj = prov?.models.find((m) => m.id === pinnedId);
+    if (modelObj && (modelObj.status === 'Deprecated' || modelObj.status === 'Shutdown')) {
+      return `固定中のモデル (${pinnedId}) は現在利用不可 (${modelObj.status}) です。新しいモデルを選択してください。`;
+    }
+    return null;
+  }, [pinnedModels, activeProvider, providers]);
 
   // Test provider connection
   const testProviderConnection = useCallback(async (providerId: ProviderId): Promise<boolean> => {
@@ -414,6 +621,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         saveKeysToVault(currentVault);
 
         showNotification('success', `${prov.name}: Connected successfully!`);
+        // Automatically query live models from provider API
+        fetchModelsForProvider(providerId, prov.apiKey);
         return true;
       } else {
         const err = result.error || 'Connection test failed';
@@ -500,6 +709,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (isConnected) {
       showNotification('success', `${prov?.name || providerId} key saved and connected!`);
+      // Automatically query live models from provider API
+      fetchModelsForProvider(providerId, apiKey.trim());
       return true;
     } else {
       showNotification('error', `${prov?.name || providerId}: ${validation.error || 'Invalid key'}`);
@@ -757,6 +968,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         testProviderConnection,
         removeApiKey,
         refreshOpenRouterCatalog,
+
+        // Pinned Models & Dynamic Fetch
+        pinnedModels,
+        pinModel,
+        unpinModel,
+        isModelPinned,
+        fetchModelsForProvider,
+        fetchAllConnectedModels,
+        pinnedModelDeprecatedWarning,
+
         isDemoMode,
         setIsDemoMode,
         hasAnyRealKey,

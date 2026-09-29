@@ -85,6 +85,12 @@ export async function executeAIRequest(params: ExecuteAIParams): Promise<AIExecu
   // Check if real key is present
   const apiKey = providerConfig?.apiKey?.trim() || '';
 
+  // Check model lifecycle status: reject Deprecated or Shutdown models without automatic fallback
+  const targetModelOption = providerConfig?.models.find((m) => m.id === model);
+  if (targetModelOption && (targetModelOption.status === 'Deprecated' || targetModelOption.status === 'Shutdown')) {
+    throw new Error(`このモデル (${model}) は現在利用できません (${targetModelOption.status})。新しいモデルを選択してください。`);
+  }
+
   // If Demo Mode or Key is missing, generate realistic demo stream
   if (isDemoMode || !apiKey) {
     return executeDemoSimulation(messages, model, provider, onChunk, signal);

@@ -16,7 +16,8 @@ import {
   Code,
   Eye,
   Check,
-  FileCode
+  FileCode,
+  AlertTriangle
 } from 'lucide-react';
 import { executeAIRequest } from '../../services/aiService';
 import { exportProjectAsZip } from '../../services/projectService';
@@ -30,7 +31,8 @@ export const BuildView: React.FC = () => {
     isDemoMode,
     createProject,
     setActiveTab,
-    showNotification
+    showNotification,
+    pinnedModelDeprecatedWarning
   } = useApp();
 
   const [prompt, setPrompt] = useState('ポケモンカードの価格を検索できるサイトを作って');
@@ -308,6 +310,25 @@ Use modern Tailwind CSS and Material 3 Expressive aesthetics. Do NOT provide pla
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)] bg-neutral-950">
+      {/* Deprecated Fixed Model Warning Banner */}
+      {pinnedModelDeprecatedWarning && (
+        <div className="px-6 py-3 bg-rose-950/40 border-b border-rose-500/40 text-rose-200 flex items-center justify-between text-xs animate-in slide-in-from-top-1">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <div>
+              <span className="font-bold text-white mr-1.5">Your fixed model is deprecated:</span>
+              <span className="text-rose-300">「{pinnedModelDeprecatedWarning}」Please select another available model.</span>
+            </div>
+          </div>
+          <button
+            onClick={() => setActiveTab('models')}
+            className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-[11px] shrink-0 transition cursor-pointer"
+          >
+            モデル一覧で選択
+          </button>
+        </div>
+      )}
+
       {/* Top Builder Control Bar */}
       <div className="p-4 border-b border-neutral-800 bg-neutral-950/80 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
         {/* Prompt Input & Presets */}

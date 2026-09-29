@@ -11,14 +11,17 @@ export class OpenRouterProviderAdapter implements AIProviderAdapter {
   websiteUrl = 'https://openrouter.ai';
   consoleUrl = 'https://openrouter.ai/keys';
 
-  // Seed default models while live catalog loads
   models: ModelOption[] = [
     {
       id: 'anthropic/claude-3.5-sonnet',
       name: 'Claude 3.5 Sonnet (OpenRouter)',
       provider: 'openrouter',
+      status: 'Active',
       category: 'recommended',
       contextLength: 200000,
+      supportsText: true,
+      supportsImage: true,
+      supportsCode: true,
       promptPricePerM: 3.00,
       completionPricePerM: 15.00,
       description: 'Gold-standard coding and software architecture model via OpenRouter.'
@@ -27,8 +30,12 @@ export class OpenRouterProviderAdapter implements AIProviderAdapter {
       id: 'deepseek/deepseek-r1',
       name: 'DeepSeek R1 (OpenRouter)',
       provider: 'openrouter',
+      status: 'Active',
       category: 'reasoning',
       contextLength: 128000,
+      supportsText: true,
+      supportsImage: false,
+      supportsCode: true,
       promptPricePerM: 0.55,
       completionPricePerM: 2.19,
       description: 'Open-weights reasoning model with chain-of-thought verification.'
@@ -37,8 +44,12 @@ export class OpenRouterProviderAdapter implements AIProviderAdapter {
       id: 'meta-llama/llama-3.3-70b-instruct',
       name: 'Llama 3.3 70B Instruct',
       provider: 'openrouter',
+      status: 'Active',
       category: 'popular',
       contextLength: 131072,
+      supportsText: true,
+      supportsImage: false,
+      supportsCode: true,
       promptPricePerM: 0.35,
       completionPricePerM: 0.40,
       description: 'Meta flagship open model with state-of-the-art coding abilities.'
@@ -47,8 +58,12 @@ export class OpenRouterProviderAdapter implements AIProviderAdapter {
       id: 'google/gemini-2.0-flash-001',
       name: 'Gemini 2.0 Flash (OpenRouter)',
       provider: 'openrouter',
+      status: 'Active',
       category: 'fast',
       contextLength: 1048576,
+      supportsText: true,
+      supportsImage: true,
+      supportsCode: true,
       promptPricePerM: 0.10,
       completionPricePerM: 0.40,
       description: 'Extremely fast 1M context model.'
@@ -57,31 +72,15 @@ export class OpenRouterProviderAdapter implements AIProviderAdapter {
       id: 'deepseek/deepseek-chat',
       name: 'DeepSeek V3 (OpenRouter)',
       provider: 'openrouter',
+      status: 'Active',
       category: 'coding',
       contextLength: 128000,
+      supportsText: true,
+      supportsImage: false,
+      supportsCode: true,
       promptPricePerM: 0.14,
       completionPricePerM: 0.28,
       description: 'Exceptional open coder with unmatched cost-efficiency.'
-    },
-    {
-      id: 'qwen/qwen-2.5-72b-instruct',
-      name: 'Qwen 2.5 72B Instruct',
-      provider: 'openrouter',
-      category: 'popular',
-      contextLength: 131072,
-      promptPricePerM: 0.35,
-      completionPricePerM: 0.40,
-      description: 'Top-tier multilingual and fullstack coding model.'
-    },
-    {
-      id: 'meta-llama/llama-3.2-3b-instruct:free',
-      name: 'Llama 3.2 3B Instruct (Free)',
-      provider: 'openrouter',
-      category: 'free',
-      contextLength: 131072,
-      promptPricePerM: 0.00,
-      completionPricePerM: 0.00,
-      description: 'Completely free tier model on OpenRouter.'
     }
   ];
 
@@ -125,12 +124,21 @@ export class OpenRouterProviderAdapter implements AIProviderAdapter {
         else if (m.id.includes('code') || m.id.includes('sonnet')) category = 'coding';
         else if (m.id.includes('flash') || m.id.includes('mini') || m.id.includes('8b')) category = 'fast';
 
+        const desc = (m.description || '').toLowerCase();
+        let status: 'Active' | 'Preview' | 'Deprecated' | 'Shutdown' = 'Active';
+        if (desc.includes('deprecated') || m.id.includes('deprecated')) status = 'Deprecated';
+        else if (m.id.includes('preview') || m.id.includes(':free')) status = 'Preview';
+
         return {
           id: m.id,
           name: m.name || m.id,
           provider: 'openrouter',
+          status,
           category,
           contextLength: m.context_length || 128000,
+          supportsText: true,
+          supportsImage: m.architecture?.modality?.includes('image') || desc.includes('vision'),
+          supportsCode: true,
           promptPricePerM: Number(promptPerM.toFixed(4)),
           completionPricePerM: Number(compPerM.toFixed(4)),
           description: m.description ? m.description.slice(0, 160) + '...' : `OpenRouter model (${m.id})`
@@ -147,7 +155,7 @@ export class OpenRouterProviderAdapter implements AIProviderAdapter {
   }
 
   async listModels(): Promise<ModelOption[]> {
-    return this.models;
+    return this.fetchDynamicModels();
   }
 
   async streamText(params: StreamParams): Promise<GenerateResult> {

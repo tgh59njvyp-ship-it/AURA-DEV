@@ -13,16 +13,26 @@ export type ProviderId =
 
 export type ModelCategory = 'recommended' | 'fast' | 'reasoning' | 'coding' | 'free' | 'popular' | 'vision';
 
+export type ModelLifecycleStatus = 'Active' | 'Preview' | 'Deprecated' | 'Shutdown';
+
 export interface ModelOption {
-  id: string;
-  name: string;
+  id: string; // Formal Model ID for API requests
+  name: string; // Human readable display name
   provider: ProviderId;
+  status: ModelLifecycleStatus;
   category?: ModelCategory;
   contextLength?: number;
+  inputTokenLimit?: number;
+  outputTokenLimit?: number;
+  supportsText: boolean;
+  supportsImage: boolean;
+  supportsCode: boolean;
   promptPricePerM?: number; // USD per 1M tokens
   completionPricePerM?: number; // USD per 1M tokens
   description?: string;
   isAvailable?: boolean;
+  isPinned?: boolean;
+  fetchedAt?: number;
 }
 
 export interface ProviderConfig {
@@ -35,9 +45,12 @@ export interface ProviderConfig {
   baseUrl?: string;
   isConnected: boolean;
   isValidating?: boolean;
+  isFetchingModels?: boolean;
   lastTested?: string;
+  lastModelsFetched?: string;
   errorMessage?: string;
   defaultModel: string;
+  pinnedModelId?: string; // Explicitly pinned / fixed model ID by the user
   models: ModelOption[];
   iconName: string;
   keyPlaceholder: string;
