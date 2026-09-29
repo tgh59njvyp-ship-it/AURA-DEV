@@ -1,0 +1,6 @@
+{
+  "name": "AURA DEV - AI Developer Workspace",
+  "description": "Multi-provider AI developer workspace with bring-your-own-key support, streaming chat, autonomous code builder, live preview, diff viewer, custom agents, and usage analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
